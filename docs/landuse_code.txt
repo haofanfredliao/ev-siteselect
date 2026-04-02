@@ -1,0 +1,37 @@
+Land Use Reclassification Codes (HK Island 5m Raster)
+====================================================
+
+致模型开发组员 (Phase 2 & 3)：
+请在 ModelBuilder 的 Reclassify (重分类) 工具中，按照以下分类规则配置 Value (gridcode) 字段：
+
+1. 赋予最高适宜性分数 (Score = 5) 的用地：
+   - 11 (Commercial/Business and Office / 商业 / 商贸及办公室)
+
+2. 设定为限制区域 (Restricted = NoData) 的水体用地：
+   - 91 (Reservoirs / 水塘)
+   - 92 (Streams and Nullahs / 河溪及明渠)
+
+3. 设定为限制区域 (Restricted = NoData) 的自然/生态/郊野公园用地：
+   - 71 (Woodland / 林地)
+   - 72 (Shrubland / 灌丛)
+   - 73 (Grassland / 草地)
+   - 74 (Mangrove/Swamp / 红树林及沼泽)
+   - 83 (Rocky Shore / 岩岸)
+
+4. 其他需要统一赋予过渡分 (Score = 1 至 4) 的一般用地：
+   - 1  (Private Residential / 私人住宅)
+   - 2  (Public Residential / 公营房屋)
+   - 3  (Rural Settlement / 乡郊居所)
+   - 21 (Industrial Land / 工业用地)
+   - 22 (Industrial Estates/Science and Technology Parks / 工业邨 / 科学园及科技园)
+   - 23 (Warehouse and Open Storage / 货仓及露天贮物)
+   - 31 (Government, Institutional and Community Facilities / 政府、机构及社区设施)
+   - 32 (Open Space and Recreation / 休憩用地及康乐设施)
+   - 41 (Roads and Transport Facilities / 道路及运输设施)
+   - 42 (Railways / 铁路)
+   - 44 (Port Facilities / 港口设施)
+   - 51 (Cemeteries/Funeral Facilities / 坟场及殡仪设施)
+   - 52 (Utilities / 公用事业设施)
+   - 53 (Vacant Land/Construction in Progress / 空置 / 正在进行建筑工程的土地)
+   - 54 (Others / 其他)
+   - 61 (Agricultural Land / 农地)
