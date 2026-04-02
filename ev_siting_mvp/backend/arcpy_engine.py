@@ -18,6 +18,7 @@ Run the siting model via run_suitability_model(weights, num_sites).
 
 import logging
 import os
+import shutil
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,8 @@ SLOPE_TIF      = os.path.join(RAW_DATA, "slope.tif")
 LSUG_SHP       = os.path.join(RAW_DATA, "LSUG_21C_converted.shp")
 CENTERLINE_SHP = os.path.join(RAW_DATA, "Transportation_TNM_20260319.gdb_CENTERLINE_converted.shp")
 EV_SHP         = os.path.join(RAW_DATA, "download_20260401_1622_converted.shp")
+# arcpy path parser treats ".gdb" anywhere in a path as a geodatabase indicator,
+# so files with ".gdb" embedded in their name must be copied to clean names at runtime.
 GEOCOM_CSV     = os.path.join(RAW_DATA, "GeoCom4.1_202510.csv")
 
 # Preprocessed outputs
@@ -59,6 +62,21 @@ _OUTPUT_LABELS = {
 }
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def _shutil_copy_shapefile(src_shp: str, dst_shp: str) -> None:
+    """
+    Copy a shapefile using plain shutil (bypasses arcpy path parsing).
+    Copies all sidecar files that share the same stem (.dbf, .shx, .prj, .cpg, etc.)
+    """
+    src_base = os.path.splitext(src_shp)[0]
+    dst_base = os.path.splitext(dst_shp)[0]
+    src_dir  = os.path.dirname(src_shp)
+    stem     = os.path.basename(src_base)
+    for fname in os.listdir(src_dir):
+        if fname.startswith(stem + ".") or fname == os.path.basename(src_shp):
+            ext = fname[len(stem):]          # e.g.  ".shp", ".dbf", ".shx" …
+            shutil.copy2(os.path.join(src_dir, fname), dst_base + ext)
+    logger.info("  Copied shapefile %s → %s", os.path.basename(src_shp), os.path.basename(dst_shp))
 
 def _setup_env(snap_raster: str) -> None:
     """Configure ArcPy environment to match the snap/reference raster."""
@@ -177,9 +195,14 @@ def preprocess_all() -> None:
 
         # ── Step 3: Road accessibility (Euclidean distance to CENTERLINE) ─────
         logger.info("[3/6] Road accessibility …")
-        # arcpy.env.mask blocks EucDistance source validation; clear it temporarily
+        # arcpy path parser treats ".gdb" anywhere in a path as a file geodatabase,
+        # so all arcpy tools (including FeatureClassToFeatureClass) reject the raw path.
+        # Use shutil to copy the shapefile components to a clean name with plain Python.
+        centerline_clean = os.path.join(PREPROCESSED, "centerline_work.shp")
+        if not os.path.exists(centerline_clean):
+            _shutil_copy_shapefile(CENTERLINE_SHP, centerline_clean)
         arcpy.env.mask = ""
-        road_dist = sa.EucDistance(CENTERLINE_SHP)
+        road_dist = sa.EucDistance(centerline_clean)
         arcpy.env.mask = BLU_TIF
         # Closer to road = higher score → high_is_better=False
         road_score = _normalize_raster(road_dist, high_is_better=False)
@@ -188,6 +211,7 @@ def preprocess_all() -> None:
 
         # ── Step 4: EV competition (distance from existing chargers) ──────────
         logger.info("[4/6] EV competition distance …")
+        # download_20260401_1622_converted.shp has no .gdb issue so use directly
         arcpy.env.mask = ""
         ev_dist = sa.EucDistance(EV_SHP)
         arcpy.env.mask = BLU_TIF
