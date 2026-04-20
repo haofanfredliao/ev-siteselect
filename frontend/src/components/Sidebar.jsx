@@ -1,11 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
 import AnalysisTab from './AnalysisTab';
-import AIChatTab from './AIChatTab';
-
-const TABS = [
-  { id: 'analysis', label: '📊 Analysis' },
-  { id: 'ai',       label: '🤖 AI Assistant' },
-];
 
 export default function Sidebar({
   factors, sources, allReady, statusError,
@@ -14,7 +8,7 @@ export default function Sidebar({
   selectedDistricts, onDistrictsChange,
   activeLayer, onLayerChange,
 }) {
-  const [activeTab, setActiveTab] = useState('analysis');
+  const [activeTab] = useState('analysis');
   const [width, setWidth] = useState(320);
   const dragging = useRef(false);
 
@@ -43,45 +37,27 @@ export default function Sidebar({
         <p className="text-xs text-white/70">Powered by ArcPy · FastAPI · React</p>
       </div>
 
-      {/* Tab bar */}
-      <div className="flex border-b border-gray-200 flex-shrink-0">
-        {TABS.map(t => (
-          <button
-            key={t.id}
-            onClick={() => setActiveTab(t.id)}
-            className={`flex-1 text-xs font-medium py-2 transition-colors ${
-              activeTab === t.id
-                ? 'text-blue-600 border-b-2 border-blue-600'
-                : 'text-gray-400 hover:text-gray-600'
-            }`}
-          >{t.label}</button>
-        ))}
-      </div>
 
       {/* Scrollable body */}
       <div className="flex-1 overflow-y-auto px-4 py-3">
-        {activeTab === 'analysis' ? (
-          <AnalysisTab
-            factors={factors}
-            sources={sources}
-            allReady={allReady}
-            statusError={statusError}
-            onUpdateFactor={onUpdateFactor}
-            onRemoveFactor={onRemoveFactor}
-            onAddFactor={onAddFactor}
-            onStatusUpdate={onStatusUpdate}
-            collectWeights={collectWeights}
-            onResults={onResults}
-            geojson={geojson}
-            onFlyTo={onFlyTo}
-            selectedDistricts={selectedDistricts}
-            onDistrictsChange={onDistrictsChange}
-            activeLayer={activeLayer}
-            onLayerChange={onLayerChange}
-          />
-        ) : (
-          <AIChatTab />
-        )}
+        <AnalysisTab
+          factors={factors}
+          sources={sources}
+          allReady={allReady}
+          statusError={statusError}
+          onUpdateFactor={onUpdateFactor}
+          onRemoveFactor={onRemoveFactor}
+          onAddFactor={onAddFactor}
+          onStatusUpdate={onStatusUpdate}
+          collectWeights={collectWeights}
+          onResults={onResults}
+          geojson={geojson}
+          onFlyTo={onFlyTo}
+          selectedDistricts={selectedDistricts}
+          onDistrictsChange={onDistrictsChange}
+          activeLayer={activeLayer}
+          onLayerChange={onLayerChange}
+        />
       </div>
 
       {/* Footer */}

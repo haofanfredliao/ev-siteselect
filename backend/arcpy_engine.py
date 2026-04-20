@@ -147,6 +147,16 @@ def _setup_env(snap_raster: str) -> None:
     arcpy.env.mask                   = snap_raster
 
 
+def _teardown_env() -> None:
+    """Reset ArcPy environment after preprocessing to avoid contaminating later calls."""
+    import arcpy
+    arcpy.env.snapRaster             = None
+    arcpy.env.extent                 = None
+    arcpy.env.cellSize               = None
+    arcpy.env.outputCoordinateSystem = None
+    arcpy.env.mask                   = None
+
+
 def _get_raster_stats(raster) -> tuple:
     import arcpy
     r_min = float(arcpy.management.GetRasterProperties(raster, "MINIMUM").getOutput(0))
@@ -280,6 +290,7 @@ def preprocess_population(source: str = "") -> None:
         _save_200m(OUT_POP, OUT_POP_200)
         logger.info("[population] Done.")
     finally:
+        _teardown_env()
         arcpy.CheckInExtension("Spatial")
 
 
@@ -329,6 +340,7 @@ def preprocess_poi(source: str = "") -> None:
         _save_200m(OUT_POI, OUT_POI_200)
         logger.info("[poi] Done.")
     finally:
+        _teardown_env()
         arcpy.CheckInExtension("Spatial")
 
 
@@ -364,6 +376,7 @@ def preprocess_road(source: str = "") -> None:
         _save_200m(OUT_ROAD, OUT_ROAD_200)
         logger.info("[road] Done.")
     finally:
+        _teardown_env()
         arcpy.CheckInExtension("Spatial")
 
 
@@ -385,6 +398,7 @@ def preprocess_ev(source: str = "") -> None:
         _save_200m(OUT_EV, OUT_EV_200)
         logger.info("[ev] Done.")
     finally:
+        _teardown_env()
         arcpy.CheckInExtension("Spatial")
 
 
@@ -404,6 +418,7 @@ def preprocess_slope(source: str = "") -> None:
         _save_200m(OUT_SLOPE, OUT_SLOPE_200)
         logger.info("[slope] Done.")
     finally:
+        _teardown_env()
         arcpy.CheckInExtension("Spatial")
 
 
@@ -434,6 +449,7 @@ def preprocess_landuse(source: str = "") -> None:
         _save_200m(OUT_MASK,    OUT_MASK_200)
         logger.info("[landuse] Done.")
     finally:
+        _teardown_env()
         arcpy.CheckInExtension("Spatial")
 
 
@@ -633,18 +649,28 @@ def export_raster_overlay(name: str) -> dict:
         raise FileNotFoundError(f"Raster overlay not available: '{name}'")
 
     arcpy.env.overwriteOutput = True
+    # Clear any lingering environment settings left by _setup_env / preprocessing
+    # (snapRaster, extent, cellSize are in EPSG:2326 metres and must not bleed
+    #  into this WGS84 reprojection step, or the output raster will be misaligned)
+    arcpy.env.snapRaster             = None
+    arcpy.env.extent                 = None
+    arcpy.env.cellSize               = None
+    arcpy.env.mask                   = None
+    arcpy.env.outputCoordinateSystem = None
+
     tmp_50m      = os.path.join(PREPROCESSED, f"tmp_overlay_{name}.tif")
     tmp_50m_wgs84 = os.path.join(PREPROCESSED, f"tmp_overlay_{name}_wgs84.tif")
     try:
         # 1. Downsample to 50 m in native projection (HK1980)
         arcpy.management.Resample(raster_path, tmp_50m, "50", "BILINEAR")
 
-        # 2. Reproject to WGS84 so that the PNG pixels align with Leaflet's
-        #    lat/lng coordinate space — this eliminates the HK1980→WGS84 shear
+        # 2. Reproject to WGS84 with explicit cell size (~50 m in degrees at HK latitude)
+        #    so the PNG pixels align with Leaflet's lat/lng coordinate space
         sr_4326 = arcpy.SpatialReference(4326)
         arcpy.management.ProjectRaster(
             tmp_50m, tmp_50m_wgs84, sr_4326,
             resampling_type="BILINEAR",
+            cell_size="0.00045",   # ≈ 50 m at 22°N; explicit to avoid env inheritance
         )
 
         # 3. Derive WGS84 bounds from the reprojected raster extent
