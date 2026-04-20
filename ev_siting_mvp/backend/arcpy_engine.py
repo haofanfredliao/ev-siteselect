@@ -16,9 +16,11 @@ and is designed to run once (results are cached).
 Run the siting model via run_suitability_model(weights, num_sites).
 """
 
+import json
 import logging
 import os
 import shutil
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +61,19 @@ _OUTPUT_LABELS = {
     OUT_SLOPE:   "Slope Suitability",
     OUT_LANDUSE: "Land Use Score",
     OUT_MASK:    "Land Use Mask",
+}
+
+# Results directory for timestamped outputs
+RESULTS_DIR = os.path.join(_APP_DIR, "data", "results")
+
+# Default raw data source for each factor key
+DEFAULT_SOURCES = {
+    "population":         os.path.basename(LSUG_SHP),
+    "poi":                os.path.basename(GEOCOM_CSV),
+    "road_accessibility": os.path.basename(CENTERLINE_SHP),
+    "ev_competition":     os.path.basename(EV_SHP),
+    "slope":              os.path.basename(SLOPE_TIF),
+    "landuse":            os.path.basename(BLU_TIF),
 }
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -130,43 +145,38 @@ def get_preprocessing_status() -> dict:
     return status
 
 
-# ─── Preprocessing pipeline ───────────────────────────────────────────────────
+# ─── Per-factor preprocessing functions ───────────────────────────────────────
 
-def preprocess_all() -> None:
-    """
-    One-time preprocessing: converts all raw datasets into normalised
-    score rasters (1–10 scale) saved in data/preprocessed/.
+def _resolve_source(source: str, default: str) -> str:
+    """Resolve a source filename to a full path in RAW_DATA."""
+    name = source if source else default
+    return os.path.join(RAW_DATA, name)
 
-    Expected runtime: 15–40 minutes on a modern workstation for the full
-    5 m resolution BLU.tif extent.
-    """
+
+def preprocess_population(source: str = "") -> None:
+    """Population density (persons / km²) from LSUG polygons."""
     import arcpy
-    from arcpy import sa as sa
-
-    logger.info("=== Starting EV Siting Preprocessing ===")
+    from arcpy import sa
+    src = _resolve_source(source, os.path.basename(LSUG_SHP))
     os.makedirs(PREPROCESSED, exist_ok=True)
-
     arcpy.CheckOutExtension("Spatial")
     _setup_env(BLU_TIF)
-
     try:
-        # ── Step 1: Population density (persons / km²) from LSUG polygons ────
-        logger.info("[1/6] Population density …")
+        logger.info("[population] Starting …")
         lsug_work = os.path.join(PREPROCESSED, "lsug_work.shp")
         if not arcpy.Exists(lsug_work):
             arcpy.conversion.FeatureClassToFeatureClass(
-                LSUG_SHP, PREPROCESSED, "lsug_work.shp"
+                os.path.join(RAW_DATA, src) if not os.path.isabs(src) else src,
+                PREPROCESSED, "lsug_work.shp"
             )
         existing_fields = [f.name for f in arcpy.ListFields(lsug_work)]
         if "POP_DENS" not in existing_fields:
             arcpy.management.AddField(lsug_work, "POP_DENS", "DOUBLE")
-            # !shape.area! returns area in m² (EPSG:2326 is metric) → divide by 1e6 for km²
             arcpy.management.CalculateField(
                 lsug_work, "POP_DENS",
                 "(!t_pop! / (!shape.area! / 1000000.0)) if !shape.area! > 0 else 0",
                 "PYTHON3",
             )
-        # Save raw raster to a temp path first to avoid file-lock when overwriting
         pop_raw = os.path.join(PREPROCESSED, "pop_raw.tif")
         arcpy.conversion.PolygonToRaster(
             lsug_work, "POP_DENS", pop_raw, "CELL_CENTER", "NONE", BLU_TIF
@@ -174,103 +184,147 @@ def preprocess_all() -> None:
         pop_score = _normalize_raster(sa.Raster(pop_raw), high_is_better=True)
         pop_score.save(OUT_POP)
         arcpy.management.Delete(pop_raw)
-        logger.info("  → Population density done.")
+        logger.info("[population] Done.")
+    finally:
+        arcpy.CheckInExtension("Spatial")
 
-        # ── Step 2: POI density (Kernel Density from GeoCom CSV) ──────────────
-        logger.info("[2/6] POI density …")
+
+def preprocess_poi(source: str = "") -> None:
+    """POI density (Kernel Density from GeoCom CSV)."""
+    import arcpy
+    from arcpy import sa
+    src = _resolve_source(source, os.path.basename(GEOCOM_CSV))
+    os.makedirs(PREPROCESSED, exist_ok=True)
+    arcpy.CheckOutExtension("Spatial")
+    _setup_env(BLU_TIF)
+    try:
+        logger.info("[poi] Starting …")
         sr_2326 = arcpy.SpatialReference(2326)
         poi_lyr = "geocom_xy_lyr"
         if arcpy.Exists(poi_lyr):
             arcpy.management.Delete(poi_lyr)
-        arcpy.management.MakeXYEventLayer(
-            GEOCOM_CSV, "EASTING", "NORTHING", poi_lyr, sr_2326
-        )
+        arcpy.management.MakeXYEventLayer(src, "EASTING", "NORTHING", poi_lyr, sr_2326)
         ref = sa.Raster(BLU_TIF)
-        cell_px = ref.meanCellWidth          # native resolution of BLU.tif (~5 m)
-        search_radius = 500                  # 500 m bandwidth appropriate for HK urban scale
+        cell_px = ref.meanCellWidth
+        search_radius = 500
         poi_density = sa.KernelDensity(poi_lyr, "NONE", cell_px, search_radius)
         poi_score = _normalize_raster(poi_density, high_is_better=True)
         poi_score.save(OUT_POI)
-        logger.info("  → POI density done.")
-
-        # ── Step 3: Road accessibility (Euclidean distance to CENTERLINE) ─────
-        logger.info("[3/6] Road accessibility …")
-        # arcpy path parser treats ".gdb" anywhere in a path as a file geodatabase,
-        # so all arcpy tools (including FeatureClassToFeatureClass) reject the raw path.
-        # Use shutil to copy the shapefile components to a clean name with plain Python.
-        centerline_clean = os.path.join(PREPROCESSED, "centerline_work.shp")
-        if not os.path.exists(centerline_clean):
-            _shutil_copy_shapefile(CENTERLINE_SHP, centerline_clean)
-        arcpy.env.mask = ""
-        road_dist = sa.EucDistance(centerline_clean)
-        arcpy.env.mask = BLU_TIF
-        # Closer to road = higher score → high_is_better=False
-        road_score = _normalize_raster(road_dist, high_is_better=False)
-        road_score.save(OUT_ROAD)
-        logger.info("  → Road accessibility done.")
-
-        # ── Step 4: EV competition (distance from existing chargers) ──────────
-        logger.info("[4/6] EV competition distance …")
-        # download_20260401_1622_converted.shp has no .gdb issue so use directly
-        arcpy.env.mask = ""
-        ev_dist = sa.EucDistance(EV_SHP)
-        arcpy.env.mask = BLU_TIF
-        # Farther from existing chargers = less competition = higher score
-        ev_score = _normalize_raster(ev_dist, high_is_better=True)
-        ev_score.save(OUT_EV)
-        logger.info("  → EV competition done.")
-
-        # ── Step 5: Slope suitability ─────────────────────────────────────────
-        logger.info("[5/6] Slope suitability …")
-        slope_r = sa.Raster(SLOPE_TIF)
-        # Lower slope = more suitable for infrastructure
-        slope_score = _normalize_raster(slope_r, high_is_better=False)
-        slope_score.save(OUT_SLOPE)
-        logger.info("  → Slope done.")
-
-        # ── Step 6: Land-use score + binary mask from BLU.tif ─────────────────
-        logger.info("[6/6] Land-use reclassification …")
-        # Score mapping based on docs/landuse_code.txt
-        remap = sa.RemapValue([
-            [1,  6],         # Private Residential
-            [2,  5],         # Public Residential
-            [3,  3],         # Rural Settlement
-            [11, 10],        # Commercial/Business & Office ← highest suitability
-            [21, 4],         # Industrial Land
-            [22, 4],         # Industrial Estates / Science Parks
-            [23, 3],         # Warehouse and Open Storage
-            [31, 7],         # Government, Institutional & Community
-            [32, 6],         # Open Space and Recreation
-            [41, 7],         # Roads and Transport Facilities
-            [42, 5],         # Railways
-            [43, 4],         # Airport
-            [44, 4],         # Port Facilities
-            [51, 2],         # Cemeteries / Funeral Facilities
-            [52, 5],         # Utilities
-            [53, 6],         # Vacant Land / Construction in Progress (opportunity)
-            [54, 3],         # Others
-            [61, 2],         # Agricultural Land
-            [62, 2],         # Fish Ponds / Gei Wais
-            # Restricted → NODATA (excluded from siting)
-            [71, "NODATA"],  # Woodland
-            [72, "NODATA"],  # Shrubland
-            [73, "NODATA"],  # Grassland
-            [74, "NODATA"],  # Mangrove / Swamp
-            [83, "NODATA"],  # Rocky Shore
-            [91, "NODATA"],  # Reservoirs
-            [92, "NODATA"],  # Streams and Nullahs
-        ])
-        landuse_score = sa.Reclassify(BLU_TIF, "VALUE", remap, "NODATA")
-        landuse_score.save(OUT_LANDUSE)
-
-        # Binary mask: 1 = buildable, 0 = restricted/outside study area
-        mask_r = sa.Con(sa.IsNull(landuse_score), 0, 1)
-        mask_r.save(OUT_MASK)
-        logger.info("  → Land-use done.")
-
+        logger.info("[poi] Done.")
     finally:
         arcpy.CheckInExtension("Spatial")
 
+
+def preprocess_road(source: str = "") -> None:
+    """Road accessibility (Euclidean distance to CENTERLINE)."""
+    import arcpy
+    from arcpy import sa
+    src = _resolve_source(source, os.path.basename(CENTERLINE_SHP))
+    os.makedirs(PREPROCESSED, exist_ok=True)
+    arcpy.CheckOutExtension("Spatial")
+    _setup_env(BLU_TIF)
+    try:
+        logger.info("[road] Starting …")
+        centerline_clean = os.path.join(PREPROCESSED, "centerline_work.shp")
+        if not os.path.exists(centerline_clean):
+            _shutil_copy_shapefile(src, centerline_clean)
+        arcpy.env.mask = ""
+        road_dist = sa.EucDistance(centerline_clean)
+        arcpy.env.mask = BLU_TIF
+        road_score = _normalize_raster(road_dist, high_is_better=False)
+        road_score.save(OUT_ROAD)
+        logger.info("[road] Done.")
+    finally:
+        arcpy.CheckInExtension("Spatial")
+
+
+def preprocess_ev(source: str = "") -> None:
+    """EV competition (distance from existing chargers)."""
+    import arcpy
+    from arcpy import sa
+    src = _resolve_source(source, os.path.basename(EV_SHP))
+    os.makedirs(PREPROCESSED, exist_ok=True)
+    arcpy.CheckOutExtension("Spatial")
+    _setup_env(BLU_TIF)
+    try:
+        logger.info("[ev] Starting …")
+        arcpy.env.mask = ""
+        ev_dist = sa.EucDistance(src)
+        arcpy.env.mask = BLU_TIF
+        ev_score = _normalize_raster(ev_dist, high_is_better=True)
+        ev_score.save(OUT_EV)
+        logger.info("[ev] Done.")
+    finally:
+        arcpy.CheckInExtension("Spatial")
+
+
+def preprocess_slope(source: str = "") -> None:
+    """Slope suitability."""
+    import arcpy
+    from arcpy import sa
+    src = _resolve_source(source, os.path.basename(SLOPE_TIF))
+    os.makedirs(PREPROCESSED, exist_ok=True)
+    arcpy.CheckOutExtension("Spatial")
+    _setup_env(BLU_TIF)
+    try:
+        logger.info("[slope] Starting …")
+        slope_r = sa.Raster(src)
+        slope_score = _normalize_raster(slope_r, high_is_better=False)
+        slope_score.save(OUT_SLOPE)
+        logger.info("[slope] Done.")
+    finally:
+        arcpy.CheckInExtension("Spatial")
+
+
+def preprocess_landuse(source: str = "") -> None:
+    """Land-use score + binary mask from BLU.tif."""
+    import arcpy
+    from arcpy import sa
+    src = _resolve_source(source, os.path.basename(BLU_TIF))
+    os.makedirs(PREPROCESSED, exist_ok=True)
+    arcpy.CheckOutExtension("Spatial")
+    _setup_env(BLU_TIF)
+    try:
+        logger.info("[landuse] Starting …")
+        remap = sa.RemapValue([
+            [1,  6], [2,  5], [3,  3], [11, 10],
+            [21, 4], [22, 4], [23, 3],
+            [31, 7], [32, 6], [41, 7], [42, 5], [43, 4], [44, 4],
+            [51, 2], [52, 5], [53, 6], [54, 3],
+            [61, 2], [62, 2],
+            [71, "NODATA"], [72, "NODATA"], [73, "NODATA"], [74, "NODATA"],
+            [83, "NODATA"], [91, "NODATA"], [92, "NODATA"],
+        ])
+        landuse_score = sa.Reclassify(src, "VALUE", remap, "NODATA")
+        landuse_score.save(OUT_LANDUSE)
+        mask_r = sa.Con(sa.IsNull(landuse_score), 0, 1)
+        mask_r.save(OUT_MASK)
+        logger.info("[landuse] Done.")
+    finally:
+        arcpy.CheckInExtension("Spatial")
+
+
+# Dispatch table for per-factor preprocessing
+PREPROCESS_FUNCS = {
+    "population":         preprocess_population,
+    "poi":                preprocess_poi,
+    "road_accessibility": preprocess_road,
+    "ev_competition":     preprocess_ev,
+    "slope":              preprocess_slope,
+    "landuse":            preprocess_landuse,
+}
+
+
+# ─── Preprocessing pipeline (all-in-one convenience) ──────────────────────────
+
+def preprocess_all() -> None:
+    """
+    One-time preprocessing: converts all raw datasets into normalised
+    score rasters (1–10 scale) saved in data/preprocessed/.
+    """
+    logger.info("=== Starting EV Siting Preprocessing (all factors) ===")
+    for key, func in PREPROCESS_FUNCS.items():
+        func()
     logger.info("=== Preprocessing complete. Outputs in: %s ===", PREPROCESSED)
 
 
@@ -408,7 +462,10 @@ def run_suitability_model(weights: dict, num_sites: int = 5) -> dict:
                 "properties": {"score": round(score, 4), "rank": rank},
             })
 
-        return {"type": "FeatureCollection", "features": features}
+        geojson = {"type": "FeatureCollection", "features": features}
+        # Auto-save with timestamp
+        save_result_geojson(geojson)
+        return geojson
 
     finally:
         # Clean up temp files
@@ -420,3 +477,61 @@ def run_suitability_model(weights: dict, num_sites: int = 5) -> dict:
             except Exception:
                 pass
         arcpy.CheckInExtension("Spatial")
+
+
+# ─── Result persistence ───────────────────────────────────────────────────────
+
+def save_result_geojson(geojson: dict) -> str:
+    """Save a GeoJSON result with a timestamp filename. Returns the filename."""
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"result_{ts}.geojson"
+    path = os.path.join(RESULTS_DIR, filename)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(geojson, f, ensure_ascii=False)
+    logger.info("Saved result → %s", filename)
+    return filename
+
+
+def list_saved_results() -> list[dict]:
+    """Return a list of saved result files sorted newest-first."""
+    if not os.path.isdir(RESULTS_DIR):
+        return []
+    files = sorted(
+        [f for f in os.listdir(RESULTS_DIR) if f.endswith(".geojson")],
+        reverse=True,
+    )
+    results = []
+    for f in files:
+        fp = os.path.join(RESULTS_DIR, f)
+        results.append({
+            "filename": f,
+            "timestamp": f.replace("result_", "").replace(".geojson", ""),
+            "size_kb": round(os.path.getsize(fp) / 1024, 1),
+        })
+    return results
+
+
+def load_result_file(filename: str) -> dict:
+    """Load a previously saved GeoJSON result by filename."""
+    path = os.path.join(RESULTS_DIR, os.path.basename(filename))
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Result file not found: {filename}")
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def list_raw_sources() -> dict:
+    """List available raw data files grouped by extension."""
+    if not os.path.isdir(RAW_DATA):
+        return {}
+    files = os.listdir(RAW_DATA)
+    shapefiles = sorted(set(f for f in files if f.endswith(".shp")))
+    csvfiles = sorted(f for f in files if f.endswith(".csv"))
+    tiffiles = sorted(f for f in files if f.endswith(".tif"))
+    return {
+        "shapefiles": shapefiles,
+        "csv": csvfiles,
+        "tif": tiffiles,
+        "defaults": DEFAULT_SOURCES,
+    }
