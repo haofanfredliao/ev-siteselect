@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { FACTOR_DEFS } from '../utils/constants';
 import FactorModule from './FactorModule';
 
-export default function FactorModuleList({ factors, sources, onUpdate, onRemove, onAdd }) {
+export default function FactorModuleList({ factors, sources, onUpdate, onRemove, onAdd, activeLayer, onLayerChange }) {
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const totalWeight = factors.reduce((s, f) => s + f.weight, 0);
 
@@ -20,6 +20,8 @@ export default function FactorModuleList({ factors, sources, onUpdate, onRemove,
             totalWeight={totalWeight}
             onUpdate={onUpdate}
             onRemove={onRemove}
+            activeLayer={activeLayer}
+            onLayerChange={onLayerChange}
           />
         ))}
       </div>

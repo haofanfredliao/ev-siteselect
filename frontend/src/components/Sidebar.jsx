@@ -11,6 +11,8 @@ export default function Sidebar({
   factors, sources, allReady, statusError,
   onUpdateFactor, onRemoveFactor, onAddFactor,
   onStatusUpdate, collectWeights, onResults, geojson, onFlyTo,
+  selectedDistricts, onDistrictsChange,
+  activeLayer, onLayerChange,
 }) {
   const [activeTab, setActiveTab] = useState('analysis');
   const [width, setWidth] = useState(320);
@@ -72,6 +74,10 @@ export default function Sidebar({
             onResults={onResults}
             geojson={geojson}
             onFlyTo={onFlyTo}
+            selectedDistricts={selectedDistricts}
+            onDistrictsChange={onDistrictsChange}
+            activeLayer={activeLayer}
+            onLayerChange={onLayerChange}
           />
         ) : (
           <AIChatTab />

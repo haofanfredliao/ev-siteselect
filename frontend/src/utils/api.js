@@ -30,11 +30,11 @@ export async function fetchRawSources() {
   return res.json();
 }
 
-export async function runSiting(weights, numSites) {
+export async function runSiting(weights, numSites, studyArea = []) {
   const res = await fetch(`${API_BASE}/siting`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ weights, num_sites: numSites }),
+    body: JSON.stringify({ weights, num_sites: numSites, study_area: studyArea }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -57,6 +57,24 @@ export async function fetchResultFile(filename) {
 
 export function streetViewUrl(lat, lng) {
   return `${API_BASE}/streetview?lat=${lat}&lng=${lng}`;
+}
+
+export async function fetchDistrictGeoJSON() {
+  const res = await fetch(`${API_BASE}/districts/geojson`);
+  if (!res.ok) throw new Error('Failed to fetch district GeoJSON');
+  return res.json();
+}
+
+export async function fetchRasterLayer(name) {
+  const res = await fetch(`${API_BASE}/layer/raster/${encodeURIComponent(name)}`);
+  if (!res.ok) throw new Error(`Raster layer not available: ${name}`);
+  return res.json();  // { png_base64, bounds, name }
+}
+
+export async function fetchVectorLayer(name) {
+  const res = await fetch(`${API_BASE}/layer/vector/${encodeURIComponent(name)}`);
+  if (!res.ok) throw new Error(`Vector layer not available: ${name}`);
+  return res.json();  // GeoJSON FeatureCollection
 }
 
 export async function sendAiChat(message, history) {

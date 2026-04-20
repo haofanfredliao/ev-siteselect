@@ -3,7 +3,7 @@ import { FACTOR_DEFS } from '../utils/constants';
 
 const DEFAULT_FACTORS = Object.keys(FACTOR_DEFS).map(key => ({
   key,
-  weight: 5,
+  weight: 50,
   source: '',          // empty = use default
   status: 'unknown',   // unknown | ready | pending | error
 }));
@@ -18,7 +18,7 @@ export default function useFactors() {
   const addFactor = useCallback((key) => {
     setFactors(prev => {
       if (prev.some(f => f.key === key)) return prev;
-      return [...prev, { key, weight: 5, source: '', status: 'unknown' }];
+      return [...prev, { key, weight: 50, source: '', status: 'unknown' }];
     });
   }, []);
 
@@ -42,7 +42,9 @@ export default function useFactors() {
   }, [factors]);
 
   // Sync status from API status response
+  // statusData includes: { [label]: bool, running_factors: string[] }
   const syncStatus = useCallback((statusData) => {
+    const running = Array.isArray(statusData.running_factors) ? statusData.running_factors : [];
     setFactors(prev => prev.map(f => {
       const label = {
         population: 'Population Density',
@@ -53,7 +55,8 @@ export default function useFactors() {
         landuse: 'Land Use Score',
       }[f.key];
       const ready = label ? statusData[label] : false;
-      return { ...f, status: ready ? 'ready' : 'pending' };
+      if (running.includes(f.key)) return { ...f, status: 'running' };
+      return { ...f, status: ready ? 'ready' : 'unknown' };
     }));
   }, []);
 
