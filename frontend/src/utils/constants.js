@@ -20,6 +20,46 @@ export const ALL_DISTRICTS = [
   'Yuen Long District',
 ];
 
+// Region presets for Study Area quick-select
+export const REGIONS = [
+  {
+    id: 'hk_island',
+    label: 'HK Island',
+    districts: [
+      'Central and Western District',
+      'Wan Chai District',
+      'Eastern District',
+      'Southern District',
+    ],
+  },
+  {
+    id: 'kowloon',
+    label: 'Kowloon',
+    districts: [
+      'Yau Tsim Mong District',
+      'Sham Shui Po District',
+      'Kowloon City District',
+      'Wong Tai Sin District',
+      'Kwun Tong District',
+    ],
+  },
+  {
+    id: 'new_territories',
+    label: 'New Territories',
+    districts: [
+      'Tsuen Wan District',
+      'Kwai Tsing District',
+      'Tuen Mun District',
+      'Yuen Long District',
+      'North District',
+      'Tai Po District',
+      'Sha Tin District',
+      'Sai Kung District',
+      'Islands District',
+    ],
+  },
+];
+
 // Basemap definitions
 export const BASEMAPS = [
   {
